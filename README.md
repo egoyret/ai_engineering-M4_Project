@@ -11,11 +11,12 @@
 3. [Stack Técnico](#stack-técnico)
 4. [Estructura del Proyecto](#estructura-del-proyecto)
 5. [Setup e Instalación](#setup-e-instalación)
-6. [Uso](#uso)
-7. [Archivos de Salida](#archivos-de-salida)
-8. [Observabilidad con Langfuse](#observabilidad-con-langfuse)
-9. [Manejo de Errores](#manejo-de-errores)
-10. [Decisiones y Justificaciones Técnicas](#decisiones-y-justificaciones-técnicas)
+6. [Uso — CLI](#uso--cli)
+7. [Uso — API REST](#uso--api-rest)
+8. [Archivos de Salida](#archivos-de-salida)
+9. [Observabilidad con Langfuse](#observabilidad-con-langfuse)
+10. [Manejo de Errores](#manejo-de-errores)
+11. [Decisiones y Justificaciones Técnicas](#decisiones-y-justificaciones-técnicas)
 
 ---
 
@@ -107,6 +108,7 @@ La traza raíz consolida el **grand total de tokens** sumando todos los spans hi
 | **Agentes** | LangChain LCEL (`ChatOpenAI`) | `langchain-openai` | Orquesta los dos agentes analistas |
 | **Validación** | Pydantic v2 (`BaseModel`) | `pydantic >= 2.12` | Valida el schema del output final |
 | **Observabilidad** | Langfuse v4 (OpenTelemetry) | `langfuse >= 4.0` | Traza completa de cada ejecución |
+| **API REST** | FastAPI + Uvicorn | `fastapi`, `uvicorn[standard]` | Expone el pipeline como servicio HTTP |
 | **Entorno** | python-dotenv | `python-dotenv >= 1.2` | Carga segura de API keys |
 | **Lenguaje** | Python 3.14 | — | Base del sistema |
 
@@ -146,7 +148,9 @@ ai_engineering-M4_Project/
 │
 └── src/
     ├── __init__.py
-    ├── main.py                   # Orquestador del pipeline completo
+    ├── pipeline.py               # Lógica central del pipeline (compartida por CLI y API)
+    ├── main.py                   # Punto de entrada CLI
+    ├── api.py                    # Servidor FastAPI (REST API)
     ├── models.py                 # Schema Pydantic: ContractChangeOutput
     ├── image_parser.py           # Parsing Vision con GPT-4o + Langfuse spans
     ├── exceptions.py             # Jerarquía de excepciones personalizadas
@@ -174,8 +178,11 @@ python -m venv .venv
 source .venv/bin/activate        # macOS/Linux
 # .venv\Scripts\activate         # Windows
 
-# Instalar dependencias
+# Instalar dependencias del pipeline
 pip install openai langchain langchain-openai langfuse pydantic python-dotenv
+
+# Instalar dependencias adicionales para la API REST
+pip install fastapi "uvicorn[standard]" python-multipart
 ```
 
 ### 3. Configurar variables de entorno
@@ -200,7 +207,7 @@ LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
 
 ---
 
-## Uso
+## Uso — CLI
 
 ### Ejecución básica (par de documentos por defecto)
 
@@ -228,16 +235,10 @@ python src/main.py data/test_contracts/documento_2__original.jpg \
 ============================================================
 
 🔍 [Etapa 1/4] Parseando contrato original con GPT-4o Vision...
-   ✅ Texto extraído (777 caracteres)
-
 🔍 [Etapa 2/4] Parseando enmienda con GPT-4o Vision...
-   ✅ Texto extraído (993 caracteres)
-
 🤖 [Etapa 3/4] Agente 1: construyendo mapa contextual...
-   ✅ Mapa contextual generado (3408 caracteres)
-
 🤖 [Etapa 4/4] Agente 2: extrayendo y estructurando cambios...
-   ✅ Cambios extraídos y validados con Pydantic
+   ✅ Pipeline completado.
 
 ============================================================
   📋 RESULTADO FINAL (validado por Pydantic)
@@ -257,6 +258,167 @@ python src/main.py data/test_contracts/documento_2__original.jpg \
 ✅ Pipeline completado exitosamente.
    → https://us.cloud.langfuse.com
 ```
+
+---
+
+## Uso — API REST
+
+El sistema también puede ser consumido como un servicio HTTP. La API está construida con **FastAPI** y expone el mismo pipeline a través de un endpoint `POST`.
+
+### 1. Levantar el servidor
+
+```bash
+# Desde la raíz del proyecto, con el entorno virtual activado:
+uvicorn src.api:app --reload --port 8000
+```
+
+```
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process
+INFO:     Application startup complete.
+```
+
+> **`--reload`** reinicia el servidor automáticamente al modificar el código fuente. Omitirlo en producción.
+
+---
+
+### 2. Endpoints disponibles
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/` | Información del servicio y lista de endpoints |
+| `GET` | `/health` | Health check |
+| `POST` | `/api/v1/analyze` | **Analiza un par de contratos** |
+| `GET` | `/docs` | Swagger UI (interfaz interactiva) |
+| `GET` | `/redoc` | ReDoc (documentación alternativa) |
+
+---
+
+### 3. `GET /health` — Health check
+
+```bash
+curl http://localhost:8000/health
+```
+
+```json
+{ "status": "ok", "service": "contract-analysis-api" }
+```
+
+---
+
+### 4. `POST /api/v1/analyze` — Analizar contratos
+
+Recibe dos imágenes como `multipart/form-data` y devuelve el JSON con los cambios detectados.
+
+#### Campos del request
+
+| Campo | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `original` | `file` (JPEG/PNG) | ✅ | Imagen del contrato original |
+| `amendment` | `file` (JPEG/PNG) | ✅ | Imagen de la enmienda |
+| `save_files` | `bool` (query param) | ❌ | `true` (default): guarda `.txt` y `.json` en `output/`. `false`: solo devuelve el JSON. |
+
+#### Ejemplo con `curl` — guardando archivos (comportamiento por defecto)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/analyze \
+  -F "original=@data/test_contracts/documento_1__original.jpg" \
+  -F "amendment=@data/test_contracts/documento_1__enmienda.jpg"
+```
+
+#### Ejemplo con `curl` — sin guardar archivos en disco
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/analyze?save_files=false" \
+  -F "original=@data/test_contracts/documento_1__original.jpg" \
+  -F "amendment=@data/test_contracts/documento_1__enmienda.jpg"
+```
+
+#### Respuesta exitosa `200 OK`
+
+```json
+{
+  "sections_changed": [
+    "Otorgamiento de Licencia",
+    "Plazo",
+    "Pago",
+    "Soporte",
+    "Terminación",
+    "Protección de Datos"
+  ],
+  "topics_touched": [
+    "plazos",
+    "precio",
+    "soporte",
+    "terminación",
+    "protección de datos"
+  ],
+  "summary_of_the_change": "1. **MODIFICACIÓN:** En 'Plazo' se extiende de 12 a 24 meses...\n2. **ADICIÓN:** Se introduce una nueva cláusula 'Protección de Datos'..."
+}
+```
+
+#### Respuestas de error
+
+| Código | Cuándo ocurre |
+|---|---|
+| `422` | Archivo no es JPEG/PNG, o el modelo no pudo extraer texto de la imagen |
+| `500` | Error en algún agente (OpenAI, LangChain, Pydantic) |
+
+```json
+{
+  "detail": {
+    "error":   "ImageParsingError",
+    "message": "❌ Error al llamar a la API de OpenAI Vision...",
+    "stage":   "image_parsing",
+    "hint":    "Verificá que las imágenes sean JPEG/PNG legibles."
+  }
+}
+```
+
+---
+
+### 5. Swagger UI — Interfaz visual interactiva
+
+FastAPI genera automáticamente una interfaz para explorar y probar los endpoints sin necesidad de `curl`.
+
+**URL:** [`http://localhost:8000/docs`](http://localhost:8000/docs)
+
+Desde Swagger UI podés:
+- Ver la descripción completa de cada endpoint
+- Subir las imágenes directamente desde el navegador usando el botón **"Try it out"**
+- Probar el query param `save_files` con un checkbox
+- Ver el schema de la respuesta (`ContractChangeOutput`)
+
+---
+
+### 6. Ejemplo desde Python (`requests`)
+
+```python
+import requests
+
+url = "http://localhost:8000/api/v1/analyze"
+
+with open("original.jpg", "rb") as orig, open("enmienda.jpg", "rb") as amend:
+    response = requests.post(
+        url,
+        files={
+            "original":  ("original.jpg",  orig,  "image/jpeg"),
+            "amendment": ("enmienda.jpg", amend, "image/jpeg"),
+        },
+        params={"save_files": True},
+    )
+
+result = response.json()
+print(result["summary_of_the_change"])
+```
+
+---
+
+### 7. Notas de uso
+
+- **Tiempo de respuesta**: 30–60 segundos (el endpoint es síncrono, el pipeline llama a OpenAI en cada etapa).
+- **Concurrencia**: Uvicorn maneja múltiples requests en paralelo usando un thread pool. Para uso interno o baja concurrencia es suficiente.
+- **Archivos temporales**: los `UploadFile` se guardan en archivos temporales durante el procesamiento y se eliminan automáticamente al terminar (con o sin error).
 
 ---
 
