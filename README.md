@@ -266,7 +266,7 @@ El sistema también puede ser consumido como un servicio HTTP. La API está cons
 
 ```bash
 # Desde la raíz del proyecto, con el entorno virtual activado:
-uvicorn src.api:app --reload --port 8000
+python -m uvicorn src.api:app --reload --port 8000
 ```
 
 ```
