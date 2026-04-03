@@ -178,11 +178,8 @@ python -m venv .venv
 source .venv/bin/activate        # macOS/Linux
 # .venv\Scripts\activate         # Windows
 
-# Instalar dependencias del pipeline
-pip install openai langchain langchain-openai langfuse pydantic python-dotenv
-
-# Instalar dependencias adicionales para la API REST
-pip install fastapi "uvicorn[standard]" python-multipart
+# Instalar todas las dependencias desde requirements.txt
+pip install -r requirements.txt
 ```
 
 ### 3. Configurar variables de entorno
