@@ -17,6 +17,8 @@
 9. [Observabilidad con Langfuse](#observabilidad-con-langfuse)
 10. [Manejo de Errores](#manejo-de-errores)
 11. [Decisiones y Justificaciones Técnicas](#decisiones-y-justificaciones-técnicas)
+12. [Tests](#tests)
+13. [Variables de Entorno](#variables-de-entorno)
 
 ---
 
@@ -129,11 +131,13 @@ ai_engineering-M4_Project/
 │
 ├── .env                          # API keys (no incluir en git)
 ├── .env.example                  # Plantilla de variables de entorno
-├── IMPLEMENTATION_PLAN.md        # Plan de diseño técnico del sistema
-├── INSTRUCCIONES_ORIGINALES.md   # Consigna original del proyecto
+├── Makefile                      # Comandos: make test, make serve, make run, make install
+├── pytest.ini                    # Configuración de pytest
+├── requirements.txt              # Dependencias del proyecto (pip freeze)
+├── README.md                     # Este archivo
 │
 ├── data/
-│   └── test_contracts/           # Imágenes de contratos de prueba
+│   └── test_contracts/           # Documentos de contratos de prueba
 │       ├── documento_1__original.jpg
 │       ├── documento_1__enmienda.jpg
 │       ├── documento_2__original.jpg
@@ -145,6 +149,16 @@ ai_engineering-M4_Project/
 │   ├── documento_1__original_extracted.txt
 │   ├── documento_1__enmienda_extracted.txt
 │   └── documento_1_result.json
+│
+├── tests/
+│   ├── conftest.py                        # Fixtures compartidas
+│   ├── test_exceptions.py                 # Jerarquía de excepciones
+│   ├── test_image_parser.py               # ImageParsingError
+│   ├── test_contextualization_agent.py    # ContextualizationError
+│   ├── test_extraction_agent.py           # ExtractionError
+│   ├── test_pipeline_save.py              # OutputSaveError
+│   ├── test_api_integration.py            # Integración API REST
+│   └── test_cli_integration.py            # Integración CLI
 │
 └── src/
     ├── __init__.py
@@ -671,6 +685,80 @@ El soporte PDF se implementó usando el content type `input_file` de la Response
 # PDFs: content type input_file
 {"type": "input_file", "filename": "contrato.pdf", "file_data": f"data:application/pdf;base64,{base64_data}"}
 ```
+
+---
+
+## Tests
+
+El proyecto incluye una suite de **69 tests con pytest** que cubre las dos capas del sistema: tests unitarios de cada componente y tests de integración del CLI y la API REST. Ningún test realiza llamadas reales a OpenAI ni Langfuse.
+
+### Estructura
+
+```
+tests/
+├── conftest.py                        # Fixtures compartidas (mock_langfuse, archivos temporales, contratos de prueba)
+│
+│   — Tests unitarios —
+├── test_exceptions.py                 # Jerarquía de herencia y mensajes (7 tests)
+├── test_image_parser.py               # ImageParsingError: OpenAI, respuesta vacía, rechazo, PDF (7 tests)
+├── test_contextualization_agent.py    # ContextualizationError: OutputParserException, genérico (3 tests)
+├── test_extraction_agent.py           # ExtractionError: Pydantic, resultado nulo, genérico (4 tests)
+├── test_pipeline_save.py              # OutputSaveError: makedirs y open fallidos (4 tests)
+│
+│   — Tests de integración —
+├── test_api_integration.py            # API REST end-to-end con FastAPI TestClient (28 tests)
+└── test_cli_integration.py            # CLI end-to-end, exit codes y stdout (11 tests)
+```
+
+### Tests de integración — API (`test_api_integration.py`)
+
+Usando `FastAPI TestClient` (sin servidor real), verifican el ciclo completo request → response:
+
+| Clase | Qué cubre |
+|---|---|
+| `TestRootEndpoint` | `GET /` → 200, estructura de respuesta |
+| `TestHealthEndpoint` | `GET /health` → 200, `status: ok` |
+| `TestAnalyzeSuccess` | `POST /api/v1/analyze` con JPEG y PDF → 200, campos del JSON |
+| `TestAnalyzeSaveFiles` | `save_files=true` guarda archivos; `false` no los guarda; default = true |
+| `TestAnalyzeValidation` | Extensión inválida → 422; campo faltante → 422 |
+| `TestAnalyzePipelineErrors` | `ImageParsingError` → 422; `ContextualizationError`/`ExtractionError` → 500 con `detail` estructurado; `OutputSaveError` → 200 (resultado retornado de todas formas) |
+
+### Tests de integración — CLI (`test_cli_integration.py`)
+
+Llaman directamente a `main()` con `sys.argv` mockeado, verificando exit codes y stdout:
+
+| Clase | Qué cubre |
+|---|---|
+| `TestCLISuccess` | Pipeline se invoca con los paths correctos; stdout contiene el JSON y mensajes de éxito |
+| `TestCLIFileValidation` | Archivo inexistente → exit 1 con hint de formatos aceptados |
+| `TestCLIPipelineErrors` | `ImageParsingError` / `ContextualizationError` / `ExtractionError` / `ContractPipelineError` → exit 1 + nombre de etapa en stdout; `RuntimeError` inesperado → se re-lanza (no `sys.exit`) |
+| `TestCLIOutputSaveError` | `OutputSaveError` → exit 1 |
+
+### Ejecutar los tests
+
+```bash
+make pytest     # o también: make test
+```
+
+Internamente usa `.venv/bin/pytest` para asegurar el intérprete correcto.
+No se requiere activar el entorno virtual manualmente.
+
+> **Otros comandos disponibles via `make`:**
+>
+> ```bash
+> make install   # pip install -r requirements.txt
+> make serve     # uvicorn src.api:app --reload --port 8000
+> make run       # python src/main.py (CLI con documentos por defecto)
+> make help      # lista todos los targets
+> ```
+
+### Resultado esperado
+
+```
+69 passed in ~0.80s
+```
+
+No se realizan llamadas reales a OpenAI ni Langfuse durante los tests.
 
 ---
 
