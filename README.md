@@ -1,6 +1,6 @@
 # 🤖 Agente Autónomo de Comparación de Contratos
 
-> Este sistema recibe las imágenes escaneadas de dos documentos contractuales, las lee utilizando IA de visión, y utiliza un equipo de **"analistas virtuales"** (Agentes de IA) para entender el contexto y extraer exactamente qué cláusulas se modificaron, devolviendo un reporte estructurado y sin errores que los sistemas de la empresa pueden procesar automáticamente.
+> Este sistema recibe los documentos contractuales (imágenes escaneadas **JPEG/PNG** o archivos **PDF**), los lee utilizando IA de visión, y utiliza un equipo de **"analistas virtuales"** (Agentes de IA) para entender el contexto y extraer exactamente qué cláusulas se modificaron, devolviendo un reporte estructurado y sin errores que los sistemas de la empresa pueden procesar automáticamente.
 
 ---
 
@@ -28,7 +28,7 @@ El pipeline automatiza el proceso completo en 4 etapas secuenciales:
 
 | Etapa | Responsable | Output |
 |---|---|---|
-| 1 & 2 | GPT-4o Vision | Texto extraído de cada imagen |
+| 1 & 2 | GPT-4o Vision | Texto extraído de cada documento (imagen o PDF) |
 | 3 | Agente 1 (Contextualización) | Mapa estructural comparado |
 | 4 | Agente 2 (Extracción) | JSON validado con los cambios |
 
@@ -116,7 +116,7 @@ La traza raíz consolida el **grand total de tokens** sumando todos los spans hi
 
 | Tarea | Modelo | Justificación |
 |---|---|---|
-| Parsing de imágenes | `gpt-4o` | Máxima capacidad de visión para extraer texto legal de imágenes escaneadas |
+| Parsing de documentos | `gpt-4o` | Máxima capacidad de visión para extraer texto legal de imágenes (JPEG/PNG) y PDFs escaneados o digitales |
 | Agente 1 (Contextualización) | `gpt-4o-mini` | Tarea de análisis de texto: no requiere Vision, costo optimizado |
 | Agente 2 (Extracción) | `gpt-4o-mini` | Ídem, con structured output para garantizar JSON válido |
 
@@ -152,7 +152,7 @@ ai_engineering-M4_Project/
     ├── main.py                   # Punto de entrada CLI
     ├── api.py                    # Servidor FastAPI (REST API)
     ├── models.py                 # Schema Pydantic: ContractChangeOutput
-    ├── image_parser.py           # Parsing Vision con GPT-4o + Langfuse spans
+    ├── image_parser.py           # Parsing de documentos con GPT-4o (JPEG/PNG/PDF) + Langfuse spans
     ├── exceptions.py             # Jerarquía de excepciones personalizadas
     └── agents/
         ├── __init__.py
@@ -214,11 +214,30 @@ Procesa `documento_1__original.jpg` y `documento_1__enmienda.jpg`:
 python src/main.py
 ```
 
+### Formatos aceptados
+
+| Formato | Descripción |
+|---|---|
+| **JPEG / JPG** | Imágenes escaneadas de contratos |
+| **PNG** | Imágenes escaneadas de contratos |
+| **PDF** | PDFs digitales o escaneados, incluyendo multi-página |
+
+Se puede **mezclar formatos**: por ejemplo, el original como PDF y la enmienda como JPEG.
+
 ### Ejecución con imágenes específicas
 
 ```bash
+# Con imágenes JPEG
 python src/main.py data/test_contracts/documento_2__original.jpg \
                    data/test_contracts/documento_2__enmienda.jpg
+
+# Con PDFs
+python src/main.py contratos/contrato_original.pdf \
+                   contratos/contrato_enmienda.pdf
+
+# Mezclando formatos (PDF + JPEG)
+python src/main.py contratos/original.pdf \
+                   contratos/enmienda.jpg
 ```
 
 ### Output en consola
@@ -311,11 +330,11 @@ Recibe dos imágenes como `multipart/form-data` y devuelve el JSON con los cambi
 
 | Campo | Tipo | Requerido | Descripción |
 |---|---|---|---|
-| `original` | `file` (JPEG/PNG) | ✅ | Imagen del contrato original |
-| `amendment` | `file` (JPEG/PNG) | ✅ | Imagen de la enmienda |
+| `original` | `file` (JPEG, PNG o PDF) | ✅ | Contrato original |
+| `amendment` | `file` (JPEG, PNG o PDF) | ✅ | Enmienda o adenda |
 | `save_files` | `bool` (query param) | ❌ | `true` (default): guarda `.txt` y `.json` en `output/`. `false`: solo devuelve el JSON. |
 
-#### Ejemplo con `curl` — guardando archivos (comportamiento por defecto)
+#### Ejemplo con `curl` — con imágenes JPEG
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/analyze \
@@ -323,12 +342,20 @@ curl -X POST http://localhost:8000/api/v1/analyze \
   -F "amendment=@data/test_contracts/documento_1__enmienda.jpg"
 ```
 
+#### Ejemplo con `curl` — con PDFs
+
+```bash
+curl -X POST http://localhost:8000/api/v1/analyze \
+  -F "original=@contratos/contrato_original.pdf" \
+  -F "amendment=@contratos/contrato_enmienda.pdf"
+```
+
 #### Ejemplo con `curl` — sin guardar archivos en disco
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/analyze?save_files=false" \
-  -F "original=@data/test_contracts/documento_1__original.jpg" \
-  -F "amendment=@data/test_contracts/documento_1__enmienda.jpg"
+  -F "original=@contratos/original.pdf" \
+  -F "amendment=@contratos/enmienda.jpg"
 ```
 
 #### Respuesta exitosa `200 OK`
@@ -358,7 +385,7 @@ curl -X POST "http://localhost:8000/api/v1/analyze?save_files=false" \
 
 | Código | Cuándo ocurre |
 |---|---|
-| `422` | Archivo no es JPEG/PNG, o el modelo no pudo extraer texto de la imagen |
+| `422` | Formato no soportado (no es JPEG, PNG ni PDF), o el modelo no pudo extraer texto |
 | `500` | Error en algún agente (OpenAI, LangChain, Pydantic) |
 
 ```json
@@ -367,7 +394,7 @@ curl -X POST "http://localhost:8000/api/v1/analyze?save_files=false" \
     "error":   "ImageParsingError",
     "message": "❌ Error al llamar a la API de OpenAI Vision...",
     "stage":   "image_parsing",
-    "hint":    "Verificá que las imágenes sean JPEG/PNG legibles."
+    "hint":    "Verificá que los archivos sean JPEG, PNG o PDF legibles y que contengan contratos."
   }
 }
 ```
@@ -382,7 +409,7 @@ FastAPI genera automáticamente una interfaz para explorar y probar los endpoint
 
 Desde Swagger UI podés:
 - Ver la descripción completa de cada endpoint
-- Subir las imágenes directamente desde el navegador usando el botón **"Try it out"**
+- Subir imágenes o PDFs directamente desde el navegador usando el botón **"Try it out"**
 - Probar el query param `save_files` con un checkbox
 - Ver el schema de la respuesta (`ContractChangeOutput`)
 
@@ -395,12 +422,24 @@ import requests
 
 url = "http://localhost:8000/api/v1/analyze"
 
+# Con imágenes JPEG
 with open("original.jpg", "rb") as orig, open("enmienda.jpg", "rb") as amend:
     response = requests.post(
         url,
         files={
             "original":  ("original.jpg",  orig,  "image/jpeg"),
             "amendment": ("enmienda.jpg", amend, "image/jpeg"),
+        },
+        params={"save_files": True},
+    )
+
+# Con PDFs
+with open("original.pdf", "rb") as orig, open("enmienda.pdf", "rb") as amend:
+    response = requests.post(
+        url,
+        files={
+            "original":  ("original.pdf",  orig,  "application/pdf"),
+            "amendment": ("enmienda.pdf", amend, "application/pdf"),
         },
         params={"save_files": True},
     )
@@ -413,6 +452,7 @@ print(result["summary_of_the_change"])
 
 ### 7. Notas de uso
 
+- **Formatos**: JPEG, PNG y PDF (incluyendo PDFs escaneados y multi-página). Se puede mezclar formatos entre original y enmienda.
 - **Tiempo de respuesta**: 30–60 segundos (el endpoint es síncrono, el pipeline llama a OpenAI en cada etapa).
 - **Concurrencia**: Uvicorn maneja múltiples requests en paralelo usando un thread pool. Para uso interno o baja concurrencia es suficiente.
 - **Archivos temporales**: los `UploadFile` se guardan en archivos temporales durante el procesamiento y se eliminan automáticamente al terminar (con o sin error).
@@ -421,7 +461,7 @@ print(result["summary_of_the_change"])
 
 ## Archivos de Salida
 
-El pipeline crea automáticamente la carpeta `output/` y genera **3 archivos por corrida**, con nombres derivados de las imágenes de entrada:
+El pipeline crea automáticamente la carpeta `output/` y genera **3 archivos por corrida**, con nombres derivados de los archivos de entrada:
 
 | Archivo | Contenido |
 |---|---|
@@ -545,21 +585,22 @@ Cuando ocurre un error, el sistema:
    AuthenticationError: Incorrect API key provided.
 
 💡 Sugerencias:
-   • Verificá que la imagen no esté corrupta
+   • Verificá que el archivo no esté corrupto (imagen o PDF)
    • Aseguráte de que OPENAI_API_KEY es válida en el archivo .env
-   • Confirmá que la imagen sea un contrato legible (JPEG/PNG)
+   • Confirmá que el documento sea legible y contenga un contrato (JPEG, PNG o PDF)
 ```
 
 ---
 
 ## Decisiones y Justificaciones Técnicas
 
-### 1. OpenAI Responses API para Vision (no `chat.completions`)
+### 1. OpenAI Responses API para Vision y PDF (no `chat.completions`)
 
-Se usa `client.responses.create()` (Responses API) en lugar de `chat.completions.create()` para el parsing de imágenes porque:
+Se usa `client.responses.create()` (Responses API) en lugar de `chat.completions.create()` para el parsing de documentos porque:
 - Soporta el tipo `input_image` con imagen en base64 de forma nativa
+- Soporta el tipo `input_file` para PDFs (base64 inline), que GPT-4o procesa nativamente incluyendo múltiples páginas
 - Es la API recomendada por OpenAI para pipelines multimodales modernos
-- Permite mezclar `input_text` e `input_image` en el mismo turno de usuario
+- Permite mezclar `input_text`, `input_image` e `input_file` en el mismo turno de usuario
 
 ### 2. LangChain LCEL para los Agentes (no AgentExecutor)
 
@@ -609,10 +650,27 @@ Se creó `src/exceptions.py` con una jerarquía tipada en lugar de usar excepcio
 
 ### 8. Archivos de Output con naming derivado de las imágenes
 
-Los nombres de salida se derivan automáticamente del prefijo común entre los stems de las imágenes (`os.path.commonprefix`). Esto garantiza:
+Los nombres de salida se derivan automáticamente del prefijo común entre los stems de los archivos de entrada (`os.path.commonprefix`). Esto garantiza:
 - Trazabilidad directa entre input y output sin configuración manual
 - Los archivos de pares distintos no se pisan entre sí (`documento_1_result.json` vs `documento_2_result.json`)
 - Las re-ejecuciones con los mismos inputs sobreescriben los mismos archivos (idempotencia)
+- Funciona igual con imágenes y PDFs: el stem se extrae sin extensión
+
+### 9. Soporte nativo de PDF (sin librerías externas)
+
+El soporte PDF se implementó usando el content type `input_file` de la Responses API de OpenAI en lugar de convertir el PDF a imágenes (ej. con `pdf2image` + `poppler`). Las razones:
+- **Cero dependencias nuevas**: no requiere ninguna librería adicional ni binarios del sistema
+- **Multi-página nativo**: GPT-4o procesa todas las páginas del PDF en una sola llamada
+- **Compatibilidad**: funciona con PDFs de texto digital y PDFs escaneados (vía Vision)
+- **Prácticamente transparente**: el cambio es una bifurcación por extensión (≈ 15 líneas en `image_parser.py`)
+
+```python
+# Imágenes: content type input_image
+{"type": "input_image", "image_url": f"data:{mime_type};base64,{base64_data}"}
+
+# PDFs: content type input_file
+{"type": "input_file", "filename": "contrato.pdf", "file_data": f"data:application/pdf;base64,{base64_data}"}
+```
 
 ---
 

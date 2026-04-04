@@ -38,6 +38,9 @@ def main():
 
     Si se pasan dos argumentos desde la línea de comandos, los usa como rutas.
     Si no, usa el par documento_1 de la carpeta data/test_contracts por defecto.
+
+    Formatos aceptados: JPEG, PNG, PDF (incluyendo PDFs escaneados y multi-página).
+    Se puede mezclar: ej. original como PDF y enmienda como JPEG.
     """
     project_root   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     default_data_dir = os.path.join(project_root, "data", "test_contracts")
@@ -54,8 +57,9 @@ def main():
     # Validar que los archivos existen antes de iniciar
     for path in [original_path, amendment_path]:
         if not os.path.exists(path):
-            print(f"\n❌ Error: no se encontró el archivo de imagen: {path}")
+            print(f"\n❌ Error: no se encontró el archivo: {path}")
             print("   Verificá la ruta e intentá nuevamente.")
+            print("   Formatos aceptados: JPEG, PNG, PDF.")
             sys.exit(1)
 
     print("\n" + "=" * 60)

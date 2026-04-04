@@ -51,8 +51,8 @@ logger = logging.getLogger("contract-analysis-api")
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR   = os.path.join(PROJECT_ROOT, "output")
 
-ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg"}
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "application/pdf"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
 
 # ---------------------------------------------------------------------------
 # App FastAPI
@@ -60,8 +60,8 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 app = FastAPI(
     title="Agente Autónomo de Comparación de Contratos",
     description=(
-        "Recibe las imágenes escaneadas de un contrato original y su enmienda, "
-        "las analiza con IA (GPT-4o Vision + agentes LangChain) y devuelve un "
+        "Recibe los documentos de un contrato original y su enmienda (JPEG, PNG o PDF), "
+        "los analiza con IA (GPT-4o Vision + agentes LangChain) y devuelve un "
         "reporte estructurado con los cambios detectados."
     ),
     version="1.0.0",
@@ -74,13 +74,13 @@ app = FastAPI(
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _validate_image_file(file: UploadFile, field_name: str) -> None:
-    """Valida que el archivo subido sea una imagen JPEG o PNG."""
+def _validate_document_file(file: UploadFile, field_name: str) -> None:
+    """Valida que el archivo subido sea JPEG, PNG o PDF."""
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=422,
-            detail=f"El campo '{field_name}' debe ser una imagen JPEG o PNG. "
+            detail=f"El campo '{field_name}' debe ser JPEG, PNG o PDF. "
                    f"Extensión recibida: '{ext or 'sin extensión'}'."
         )
 
@@ -96,7 +96,7 @@ async def _save_upload_to_tempfile(upload: UploadFile) -> str:
     Returns:
         Path absoluto al archivo temporal creado.
     """
-    ext = os.path.splitext(upload.filename or ".jpg")[1].lower() or ".jpg"
+    ext = os.path.splitext(upload.filename or ".jpg")[1].lower() or ".jpg"  # preserva .pdf
     content = await upload.read()
 
     # delete=False: necesitamos que el archivo persista mientras lo usa el pipeline
@@ -135,16 +135,16 @@ def health():
     response_model=ContractChangeOutput,
     summary="Analizar par de contratos",
     description=(
-        "Recibe dos imágenes (contrato original y enmienda) como multipart/form-data, "
+        "Recibe dos documentos (contrato original y enmienda) como multipart/form-data, "
         "ejecuta el pipeline completo de análisis y devuelve un JSON estructurado "
         "con las secciones modificadas, temas afectados y el resumen de los cambios.\n\n"
-        "**Formatos aceptados**: JPEG, PNG\n\n"
+        "**Formatos aceptados**: JPEG, PNG, PDF (incluyendo PDFs escaneados y multi-página)\n\n"
         "**Tiempo estimado**: 30-60 segundos (llamadas a OpenAI)"
     ),
 )
 async def analyze_contracts(
-    original:   UploadFile = File(..., description="Imagen del contrato original (JPEG/PNG)"),
-    amendment:  UploadFile = File(..., description="Imagen de la enmienda o adenda (JPEG/PNG)"),
+    original:   UploadFile = File(..., description="Contrato original (JPEG, PNG o PDF)"),
+    amendment:  UploadFile = File(..., description="Enmienda o adenda (JPEG, PNG o PDF)"),
     save_files: bool       = Query(
         default=True,
         description=(
@@ -157,8 +157,8 @@ async def analyze_contracts(
     Endpoint principal: ejecuta el pipeline y devuelve el resultado de la comparación.
     """
     # --- Validar tipos de archivo ---
-    _validate_image_file(original,  "original")
-    _validate_image_file(amendment, "amendment")
+    _validate_document_file(original,  "original")
+    _validate_document_file(amendment, "amendment")
 
     logger.info(
         "📥 Nueva solicitud — original: %s | amendment: %s | save_files: %s",
@@ -213,7 +213,7 @@ async def analyze_contracts(
                 "error":   "ImageParsingError",
                 "message": str(e),
                 "stage":   "image_parsing",
-                "hint":    "Verificá que las imágenes sean JPEG/PNG legibles y que contengan contratos.",
+                "hint":    "Verificá que los archivos sean JPEG, PNG o PDF legibles y que contengan contratos.",
             },
         )
 
