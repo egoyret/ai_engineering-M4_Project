@@ -295,10 +295,20 @@ python src/main.py contratos/original.pdf \
 
 El sistema también puede ser consumido como un servicio HTTP. La API está construida con **FastAPI** y expone el mismo pipeline a través de un endpoint `POST`.
 
-### 1. Levantar el servidor
+> 🌐 **Servicio desplegado en producción:**
+> **`https://ai-engineering-m4-project.onrender.com`**
+>
+> Podés usar el endpoint directamente sin levantar nada localmente:
+> - Swagger UI: [`https://ai-engineering-m4-project.onrender.com/docs`](https://ai-engineering-m4-project.onrender.com/docs)
+> - Health check: [`https://ai-engineering-m4-project.onrender.com/health`](https://ai-engineering-m4-project.onrender.com/health)
+
+### 1. Levantar el servidor (local)
 
 ```bash
-# Desde la raíz del proyecto, con el entorno virtual activado:
+# Desde la raíz del proyecto:
+make serve
+
+# O directamente:
 python -m uvicorn src.api:app --reload --port 8000
 ```
 
@@ -327,6 +337,10 @@ INFO:     Application startup complete.
 ### 3. `GET /health` — Health check
 
 ```bash
+# Producción
+curl https://ai-engineering-m4-project.onrender.com/health
+
+# Local
 curl http://localhost:8000/health
 ```
 
@@ -348,23 +362,23 @@ Recibe dos imágenes como `multipart/form-data` y devuelve el JSON con los cambi
 | `amendment` | `file` (JPEG, PNG o PDF) | ✅ | Enmienda o adenda |
 | `save_files` | `bool` (query param) | ❌ | `true` (default): guarda `.txt` y `.json` en `output/`. `false`: solo devuelve el JSON. |
 
-#### Ejemplo con `curl` — con imágenes JPEG
+#### Ejemplo con `curl` — producción, con imágenes JPEG
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/analyze \
+curl -X POST https://ai-engineering-m4-project.onrender.com/api/v1/analyze \
   -F "original=@data/test_contracts/documento_1__original.jpg" \
   -F "amendment=@data/test_contracts/documento_1__enmienda.jpg"
 ```
 
-#### Ejemplo con `curl` — con PDFs
+#### Ejemplo con `curl` — producción, con PDFs
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/analyze \
+curl -X POST https://ai-engineering-m4-project.onrender.com/api/v1/analyze \
   -F "original=@contratos/contrato_original.pdf" \
   -F "amendment=@contratos/contrato_enmienda.pdf"
 ```
 
-#### Ejemplo con `curl` — sin guardar archivos en disco
+#### Ejemplo con `curl` — local, sin guardar archivos en disco
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/analyze?save_files=false" \
@@ -419,7 +433,10 @@ curl -X POST "http://localhost:8000/api/v1/analyze?save_files=false" \
 
 FastAPI genera automáticamente una interfaz para explorar y probar los endpoints sin necesidad de `curl`.
 
-**URL:** [`http://localhost:8000/docs`](http://localhost:8000/docs)
+| Entorno | URL |
+|---|---|
+| **Producción** | [`https://ai-engineering-m4-project.onrender.com/docs`](https://ai-engineering-m4-project.onrender.com/docs) |
+| **Local** | [`http://localhost:8000/docs`](http://localhost:8000/docs) |
 
 Desde Swagger UI podés:
 - Ver la descripción completa de cada endpoint
@@ -434,7 +451,13 @@ Desde Swagger UI podés:
 ```python
 import requests
 
-url = "http://localhost:8000/api/v1/analyze"
+# Producción
+BASE_URL = "https://ai-engineering-m4-project.onrender.com"
+
+# Local (descomentar para desarrollo)
+# BASE_URL = "http://localhost:8000"
+
+url = f"{BASE_URL}/api/v1/analyze"
 
 # Con imágenes JPEG
 with open("original.jpg", "rb") as orig, open("enmienda.jpg", "rb") as amend:
@@ -444,7 +467,7 @@ with open("original.jpg", "rb") as orig, open("enmienda.jpg", "rb") as amend:
             "original":  ("original.jpg",  orig,  "image/jpeg"),
             "amendment": ("enmienda.jpg", amend, "image/jpeg"),
         },
-        params={"save_files": True},
+        params={"save_files": False},  # False recomendado en producción
     )
 
 # Con PDFs
@@ -455,7 +478,7 @@ with open("original.pdf", "rb") as orig, open("enmienda.pdf", "rb") as amend:
             "original":  ("original.pdf",  orig,  "application/pdf"),
             "amendment": ("enmienda.pdf", amend, "application/pdf"),
         },
-        params={"save_files": True},
+        params={"save_files": False},
     )
 
 result = response.json()
