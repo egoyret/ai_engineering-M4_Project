@@ -7,10 +7,12 @@ Expone el pipeline como un endpoint HTTP usando FastAPI.
 Ambas interfaces (CLI y API) comparten el mismo código a través de pipeline.py.
 
 Endpoints:
-    GET  /                      → Info del servicio
-    GET  /health                → Health check
-    GET  /api/v1/contracts      → Lista los contratos de ejemplo disponibles
-    POST /api/v1/analyze        → Analiza un par de imágenes de contratos
+    GET  /                              → Info del servicio
+    GET  /health                        → Health check
+    GET  /api/v1/contracts              → Lista los contratos de ejemplo
+    GET  /api/v1/contracts/{filename}   → Ver un contrato individual (raw o texto extraído)
+    POST /api/v1/analyze                → Analiza archivos subidos por el usuario
+    POST /api/v1/analyze/sample         → Analiza un par de contratos de ejemplo (?pair=)
 
 Uso:
     uvicorn src.api:app --reload --port 8000
@@ -24,10 +26,10 @@ import sys
 import tempfile
 import logging
 
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 # Asegurar que la raíz del proyecto está en el path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,8 +58,15 @@ PROJECT_ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR        = os.path.join(PROJECT_ROOT, "output")
 TEST_CONTRACTS_DIR = os.path.join(PROJECT_ROOT, "data", "test_contracts")
 
-ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "application/pdf"}
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+ALLOWED_MIME_TYPES  = {"image/jpeg", "image/png", "image/jpg", "application/pdf"}
+ALLOWED_EXTENSIONS  = {".jpg", ".jpeg", ".png", ".pdf"}
+
+EXTENSION_CONTENT_TYPES = {
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png":  "image/png",
+    ".pdf":  "application/pdf",
+}
 
 # ---------------------------------------------------------------------------
 # App FastAPI
@@ -183,10 +192,12 @@ def root():
         "version":     "1.0.0",
         "description": "Pipeline de análisis multimodal de contratos con GPT-4o y LangChain.",
         "endpoints": {
-            "contracts": "GET  /api/v1/contracts",
-            "analyze":   "POST /api/v1/analyze",
-            "health":    "GET  /health",
-            "docs":      "GET  /docs",
+            "contracts":       "GET  /api/v1/contracts",
+            "contract_file":   "GET  /api/v1/contracts/{filename}",
+            "analyze":         "POST /api/v1/analyze",
+            "analyze_sample":  "POST /api/v1/analyze/sample",
+            "health":          "GET  /health",
+            "docs":            "GET  /docs",
         },
     }
 
@@ -203,7 +214,8 @@ def health():
     description=(
         "Lista los archivos de contratos de ejemplo disponibles en `data/test_contracts/`.\n\n"
         "Los archivos se agrupan por pares (original + enmienda) según el prefijo común "
-        "de sus nombres. Estos pares pueden usarse directamente con el endpoint `/api/v1/analyze`."
+        "de sus nombres. Los nombres de par pueden usarse directamente en "
+        "`POST /api/v1/analyze/sample`."
     ),
 )
 def list_contracts():
@@ -269,108 +281,113 @@ def list_contracts():
     }
 
 
-@app.post(
-    "/api/v1/analyze",
-    response_model=ContractChangeOutput,
-    summary="Analizar par de contratos",
+@app.get(
+    "/api/v1/contracts/{filename}",
+    summary="Ver contrato de ejemplo",
     description=(
-        "Ejecuta el pipeline completo y devuelve un JSON estructurado con los cambios detectados.\n\n"
-        "**Dos modos de uso:**\n"
-        "- **Upload**: envíá los campos `original` y `amendment` como archivos (multipart/form-data).\n"
-        "- **Sample**: pasá el parámetro `?pair=documento_1` para usar un contrato de ejemplo "
-        "(los disponibles se listan en `GET /api/v1/contracts`).\n\n"
-        "Si se envían archivos Y `pair` al mismo tiempo, los archivos tienen prioridad.\n\n"
-        "**Formatos aceptados**: JPEG, PNG, PDF (incluyendo PDFs escaneados y multi-página)\n\n"
-        "**Tiempo estimado**: 30-60 segundos (llamadas a OpenAI)"
+        "Devuelve un archivo de contrato de ejemplo de `data/test_contracts/`.\n\n"
+        "**Modos de uso** (param `mode`):\n"
+        "- `raw` (default): devuelve el archivo original (imagen o PDF) con el Content-Type correcto. "
+        "El browser puede renderizarlo directamente.\n"
+        "- `text`: devuelve el texto extraído por el pipeline si fue procesado previamente. "
+        "Si no hay texto cacheado, retorna `source: not_available` sin llamar a OpenAI."
     ),
 )
-async def analyze_contracts(
-    original:   Optional[UploadFile] = File(default=None, description="Contrato original (JPEG, PNG o PDF). Requerido si no se usa 'pair'."),
-    amendment:  Optional[UploadFile] = File(default=None, description="Enmienda o adenda (JPEG, PNG o PDF). Requerido si no se usa 'pair'."),
-    pair:       Optional[str]        = Query(
-        default=None,
-        description="Nombre de un par de ejemplo (ej: 'documento_1'). Ignorado si se suben archivos. Ver GET /api/v1/contracts para la lista.",
+def get_contract_file(
+    filename: str,
+    mode: Literal["raw", "text"] = Query(
+        default="raw",
+        description="'raw' (default): descarga el archivo. 'text': devuelve el texto extraído (solo si fue procesado).",
     ),
-    save_files: bool                 = Query(
-        default=True,
-        description=(
-            "Si es true (por defecto), guarda los textos extraídos y el resultado JSON "
-            "en la carpeta output/. Si es false, sólo devuelve el JSON sin tocar disco."
-        ),
-    ),
-) -> ContractChangeOutput:
-    """
-    Endpoint principal: ejecuta el pipeline en modo upload o modo sample.
-    """
-    # ------------------------------------------------------------------
-    # Determinar modo y resolver paths
-    # ------------------------------------------------------------------
-    use_upload_mode = (original is not None or amendment is not None)
-    tmp_original_path  = None
-    tmp_amendment_path = None
-    is_temp            = False          # True solo en modo upload
-    naming_original    = None           # Path usado para nombrar los archivos de salida
-    naming_amendment   = None
+):
+    """Descarga o lee el texto de un contrato de ejemplo individual."""
 
-    if use_upload_mode:
-        # Modo upload: ambos archivos son obligatorios
-        if original is None or amendment is None:
-            raise HTTPException(
-                status_code=422,
-                detail="En modo upload debés enviar tanto 'original' como 'amendment'. "
-                       "Si querés usar un contrato de ejemplo, usá solo el parámetro 'pair'.",
-            )
-        _validate_document_file(original,  "original")
-        _validate_document_file(amendment, "amendment")
-
-        logger.info(
-            "📥 Modo upload — original: %s | amendment: %s | save_files: %s",
-            original.filename, amendment.filename, save_files,
-        )
-
-        tmp_original_path  = await _save_upload_to_tempfile(original)
-        tmp_amendment_path = await _save_upload_to_tempfile(amendment)
-        is_temp            = True
-        naming_original    = os.path.join(OUTPUT_DIR, original.filename  or "original.jpg")
-        naming_amendment   = os.path.join(OUTPUT_DIR, amendment.filename or "amendment.jpg")
-
-    elif pair is not None:
-        # Modo sample: resolvemos los paths desde data/test_contracts/
-        tmp_original_path, tmp_amendment_path = _find_sample_pair(pair)
-        is_temp          = False        # no son temp files, no borrar
-        naming_original  = tmp_original_path
-        naming_amendment = tmp_amendment_path
-
-        logger.info(
-            "📥 Modo sample — pair: %s | save_files: %s",
-            pair, save_files,
-        )
-
-    else:
+    # ---- Validar extensión -----------------------------------------------
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=422,
-            detail=(
-                "Debés proveer alguna entrada: "
-                "(a) los campos 'original' y 'amendment' como archivos, o "
-                "(b) el parámetro '?pair=<nombre>' con un contrato de ejemplo. "
-                "Consultá GET /api/v1/contracts para ver los pares disponibles."
-            ),
+            detail=f"Extensión '{ext or 'sin extensión'}' no soportada. Solo JPEG, PNG y PDF.",
         )
 
-    # ------------------------------------------------------------------
-    # Ejecutar el pipeline
-    # ------------------------------------------------------------------
+    # ---- Path traversal protection ----------------------------------------
+    # Reconstruimos el path absoluto y verificamos que siga dentro del directorio
+    safe_path = os.path.abspath(os.path.join(TEST_CONTRACTS_DIR, filename))
+    if not safe_path.startswith(os.path.abspath(TEST_CONTRACTS_DIR) + os.sep):
+        raise HTTPException(
+            status_code=422,
+            detail="Nombre de archivo inválido.",
+        )
+
+    # ---- Verificar que el archivo exista ----------------------------------
+    if not os.path.isfile(safe_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"El archivo '{filename}' no existe en los contratos de ejemplo.",
+        )
+
+    # ---- Modo raw: servir el archivo directamente -------------------------
+    if mode == "raw":
+        content_type = EXTENSION_CONTENT_TYPES.get(ext, "application/octet-stream")
+        return FileResponse(
+            path=safe_path,
+            media_type=content_type,
+            filename=filename,
+        )
+
+    # ---- Modo text: leer del caché en output/ ----------------------------
+    stem            = os.path.splitext(filename)[0]          # "documento_1__original"
+    cached_text_path = os.path.join(OUTPUT_DIR, f"{stem}_extracted.txt")
+
+    if os.path.isfile(cached_text_path):
+        with open(cached_text_path, encoding="utf-8") as f:
+            text = f.read()
+        return {
+            "filename": filename,
+            "source":   "cache",
+            "text":     text,
+        }
+
+    # Sin texto cacheado: devolver info útil sin llamar a OpenAI
+    return JSONResponse(
+        status_code=200,
+        content={
+            "filename": filename,
+            "source":   "not_available",
+            "text":     None,
+            "hint": (
+                f"El texto de '{filename}' no ha sido extraído aún. "
+                "Para generarlo, procesá el par correspondiente con "
+                "POST /api/v1/analyze/sample (o POST /api/v1/analyze)."
+            ),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared pipeline execution helper
+# ---------------------------------------------------------------------------
+
+def _execute_pipeline(
+    original_path:   str,
+    amendment_path:  str,
+    naming_original: str,
+    naming_amendment: str,
+    save_files:      bool,
+) -> ContractChangeOutput:
+    """
+    Ejecuta el pipeline de análisis y traduce todas las excepciones a HTTPException.
+    Utilizado internamente por POST /api/v1/analyze y POST /api/v1/analyze/sample.
+    """
+    result = None
     try:
         logger.info("🔍 Iniciando pipeline...")
-
         result, text_original, text_amendment = run_pipeline(
-            original_path=tmp_original_path,
-            amendment_path=tmp_amendment_path,
+            original_path=original_path,
+            amendment_path=amendment_path,
         )
-
         logger.info("✅ Pipeline completado. Secciones modificadas: %s", result.sections_changed)
 
-        # --- Guardar archivos en output/ (si save_files=True) ---
         if save_files:
             saved_paths = save_output_files(
                 text_original=text_original,
@@ -389,7 +406,6 @@ async def analyze_contracts(
 
         return result
 
-    # --- Traducir excepciones del pipeline a respuestas HTTP ---
     except ImageParsingError as e:
         logger.error("❌ ImageParsingError: %s", e)
         raise HTTPException(
@@ -399,6 +415,18 @@ async def analyze_contracts(
                 "message": str(e),
                 "stage":   "image_parsing",
                 "hint":    "Verificá que los archivos sean JPEG, PNG o PDF legibles y que contengan contratos.",
+            },
+        )
+
+    except BadContractsError as e:
+        logger.error("❌ BadContractsError: %s", e)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error":   "BadContractsError",
+                "message": str(e),
+                "stage":   "extraction_agent",
+                "hint":    "Los contratos no son comparables: sus objetos son totalmente distintos.",
             },
         )
 
@@ -425,21 +453,10 @@ async def analyze_contracts(
                 "hint":    "El modelo no pudo producir el JSON requerido. Intentá nuevamente.",
             },
         )
-    except BadContractsError as e:
-        logger.error("❌ BadContractsError: %s", e)
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error":   "BadContractsError",
-                "message": str(e),
-                "stage":   "extraction_agent",
-                "hint":    "El contrato original no parece ser comparable con su enmienda ya que los objectos de los mismos son totalmente distintos.",
-            },
-        )
 
     except OutputSaveError as e:
-        logger.warning("⚠ﺏ  OutputSaveError (resultado disponible de todas formas): %s", e)
-        return result
+        logger.warning("⚠️  OutputSaveError (resultado disponible de todas formas): %s", e)
+        return result  # pipeline fue exitoso, solo falló el guardado
 
     except ContractPipelineError as e:
         logger.error("❌ ContractPipelineError: %s", e)
@@ -459,12 +476,93 @@ async def analyze_contracts(
             },
         )
 
+
+# ---------------------------------------------------------------------------
+# Endpoints de análisis
+# ---------------------------------------------------------------------------
+
+@app.post(
+    "/api/v1/analyze",
+    response_model=ContractChangeOutput,
+    summary="Analizar contratos (upload)",
+    description=(
+        "Recibe los archivos del contrato original y la enmienda como `multipart/form-data`, "
+        "ejecuta el pipeline completo y devuelve un JSON estructurado con los cambios detectados.\n\n"
+        "**Formatos aceptados**: JPEG, PNG, PDF (incluyendo PDFs escaneados y multi-página)\n\n"
+        "**Tiempo estimado**: 30-60 segundos (llamadas a OpenAI)\n\n"
+        "Para usar contratos de ejemplo sin subir archivos, vé `POST /api/v1/analyze/sample`."
+    ),
+)
+async def analyze_contracts(
+    original:   UploadFile = File(..., description="Contrato original (JPEG, PNG o PDF)"),
+    amendment:  UploadFile = File(..., description="Enmienda o adenda (JPEG, PNG o PDF)"),
+    save_files: bool       = Query(
+        default=True,
+        description="Si es true, guarda los textos extraídos y el resultado JSON en output/.",
+    ),
+) -> ContractChangeOutput:
+    """Analiza un par de contratos subidos por el usuario."""
+    _validate_document_file(original,  "original")
+    _validate_document_file(amendment, "amendment")
+
+    logger.info(
+        "📥 Upload — original: %s | amendment: %s | save_files: %s",
+        original.filename, amendment.filename, save_files,
+    )
+
+    tmp_original_path  = None
+    tmp_amendment_path = None
+    try:
+        tmp_original_path  = await _save_upload_to_tempfile(original)
+        tmp_amendment_path = await _save_upload_to_tempfile(amendment)
+        naming_original    = os.path.join(OUTPUT_DIR, original.filename  or "original.jpg")
+        naming_amendment   = os.path.join(OUTPUT_DIR, amendment.filename or "amendment.jpg")
+        return _execute_pipeline(
+            original_path=tmp_original_path,
+            amendment_path=tmp_amendment_path,
+            naming_original=naming_original,
+            naming_amendment=naming_amendment,
+            save_files=save_files,
+        )
     finally:
-        # Eliminar archivos temporales solo en modo upload
-        if is_temp:
-            for tmp_path in [tmp_original_path, tmp_amendment_path]:
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
-                        os.remove(tmp_path)
-                    except OSError:
-                        pass
+        for tmp_path in [tmp_original_path, tmp_amendment_path]:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+
+@app.post(
+    "/api/v1/analyze/sample",
+    response_model=ContractChangeOutput,
+    summary="Analizar contratos de ejemplo",
+    description=(
+        "Ejecuta el pipeline usando un par de contratos de ejemplo disponibles en el servidor. "
+        "No requiere subir archivos.\n\n"
+        "Los pares disponibles se listan en `GET /api/v1/contracts`.\n\n"
+        "**Tiempo estimado**: 30-60 segundos (llamadas a OpenAI)"
+    ),
+)
+def analyze_sample_contracts(
+    pair:       str  = Query(..., description="Nombre del par de ejemplo (ej: 'documento_1'). Ver GET /api/v1/contracts."),
+    save_files: bool = Query(
+        default=True,
+        description="Si es true, guarda los textos extraídos y el resultado JSON en output/.",
+    ),
+) -> ContractChangeOutput:
+    """Analiza un par de contratos de ejemplo pre-cargados en el servidor."""
+    original_path, amendment_path = _find_sample_pair(pair)
+
+    logger.info(
+        "📥 Sample — pair: %s | save_files: %s",
+        pair, save_files,
+    )
+
+    return _execute_pipeline(
+        original_path=original_path,
+        amendment_path=amendment_path,
+        naming_original=original_path,
+        naming_amendment=amendment_path,
+        save_files=save_files,
+    )

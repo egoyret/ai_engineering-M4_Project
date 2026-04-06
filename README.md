@@ -329,7 +329,9 @@ INFO:     Application startup complete.
 | `GET` | `/` | Información del servicio y lista de endpoints |
 | `GET` | `/health` | Health check |
 | `GET` | `/api/v1/contracts` | **Lista los contratos de ejemplo disponibles** |
-| `POST` | `/api/v1/analyze` | **Analiza un par de contratos** |
+| `GET` | `/api/v1/contracts/{filename}` | **Ver un contrato individual (raw o texto)** |
+| `POST` | `/api/v1/analyze` | **Analiza archivos subidos por el usuario** |
+| `POST` | `/api/v1/analyze/sample` | **Analiza un par de contratos de ejemplo** |
 | `GET` | `/docs` | Swagger UI (interfaz interactiva) |
 | `GET` | `/redoc` | ReDoc (documentación alternativa) |
 
@@ -378,62 +380,127 @@ curl http://localhost:8000/health
 
 ---
 
-### 5. `POST /api/v1/analyze` — Analizar contratos
+### 4. `GET /api/v1/contracts/{filename}` — Ver contrato individual
 
-Ejecuta el pipeline y devuelve el JSON con los cambios detectados. Soporta **dos modos de entrada**:
+Devuelve un contrato de ejemplo en dos modos seleccionables con `?mode=`:
 
-#### Parámetros
+| `mode` | Qué devuelve | Costo | Cuándo usar |
+|---|---|---|---|
+| `raw` (default) | El archivo original (JPEG/PDF) con Content-Type correcto | Gratis | Ver / descargar el documento |
+| `text` | JSON con el texto extraído previamente | Gratis (cache) | Leer el contenido del contrato sin ejecutar el pipeline |
 
-| Parámetro | Tipo | Dónde | Requerido | Descripción |
-|---|---|---|---|---|
-| `original` | `file` (JPEG, PNG o PDF) | form-data | condicional | Contrato original. Requerido si no se usa `pair`. |
-| `amendment` | `file` (JPEG, PNG o PDF) | form-data | condicional | Enmienda o adenda. Requerido si no se usa `pair`. |
-| `pair` | `string` | query param | condicional | Nombre de un par de ejemplo (ej: `documento_1`). Ver `GET /api/v1/contracts`. Ignorado si se suben archivos. |
-| `save_files` | `bool` | query param | ❌ | `true` (default): guarda `.txt` y `.json` en `output/`. `false`: solo retorna el JSON. |
+> Si el texto no fue extraído aún, `mode=text` devuelve `source: not_available` y un `hint` con instrucciones. **No llama a OpenAI** ni genera costos.
 
-> **Prioridad**: Si se envían archivos **y** `pair` al mismo tiempo, los archivos tienen prioridad y `pair` es ignorado.
+#### Modo `raw` — Descargar / visualizar el archivo
+
+```bash
+# Producción
+curl "https://ai-engineering-m4-project.onrender.com/api/v1/contracts/documento_1__original.jpg" \
+  --output documento_1__original.jpg
+
+# Local (en el browser: abre la imagen directamente)
+curl "http://localhost:8000/api/v1/contracts/contrato_alquiler__original.pdf" \
+  --output contrato_alquiler__original.pdf
+```
+
+#### Modo `text` — Leer el texto extraído
+
+```bash
+# Con texto cacheado → devuelve source: "cache"
+curl "https://ai-engineering-m4-project.onrender.com/api/v1/contracts/documento_1__original.jpg?mode=text"
+```
+
+```json
+{
+  "filename": "documento_1__original.jpg",
+  "source":   "cache",
+  "text":     "CONTRATO DE LICENCIA DE SOFTWARE\n\nEntre las partes..."
+}
+```
+
+```bash
+# Sin texto cacheado → devuelve source: "not_available"
+curl "https://ai-engineering-m4-project.onrender.com/api/v1/contracts/documento_2__enmienda.jpg?mode=text"
+```
+
+```json
+{
+  "filename": "documento_2__enmienda.jpg",
+  "source":   "not_available",
+  "text":     null,
+  "hint":     "El texto de 'documento_2__enmienda.jpg' no ha sido extraído aún. Para generarlo, procesá el par correspondiente con POST /api/v1/analyze/sample."
+}
+```
+
+#### Errores
+
+| Código | Cuándo |
+|---|---|
+| `404` | El archivo no existe en `data/test_contracts/` |
+| `422` | Extensión no soportada (no es JPEG, PNG ni PDF) |
 
 ---
 
-#### Modo 1 — Upload de archivos propios
+### 5. `POST /api/v1/analyze` — Upload de archivos propios
+
+Recibe los archivos del contrato original y la enmienda como `multipart/form-data`.
+
+#### Parámetros
+
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `original` | `file` (JPEG, PNG o PDF) | ✅ | Contrato original |
+| `amendment` | `file` (JPEG, PNG o PDF) | ✅ | Enmienda o adenda |
+| `save_files` | `bool` (query param) | ❌ | `true` (default): guarda resultados en `output/`. `false`: solo retorna el JSON. |
 
 ```bash
-# Con imágenes JPEG (producción)
+# Producción — con JPEG
 curl -X POST https://ai-engineering-m4-project.onrender.com/api/v1/analyze \
   -F "original=@contrato_original.jpg" \
   -F "amendment=@contrato_enmienda.jpg"
 
-# Con PDFs
+# Producción — con PDFs
 curl -X POST https://ai-engineering-m4-project.onrender.com/api/v1/analyze \
   -F "original=@contrato.pdf" \
   -F "amendment=@enmienda.pdf"
 
-# Local, sin guardar archivos en disco
+# Local — sin guardar en disco
 curl -X POST "http://localhost:8000/api/v1/analyze?save_files=false" \
   -F "original=@original.jpg" \
   -F "amendment=@enmienda.jpg"
 ```
 
-#### Modo 2 — Contrato de ejemplo (`?pair=`)
+---
+
+### 5b. `POST /api/v1/analyze/sample` — Contratos de ejemplo
+
+Ejecuta el pipeline usando archivos precargados en el servidor. **No requiere subir archivos.** Útil para explorar la API o hacer pruebas rápidas.
+
+#### Parámetros
+
+| Parámetro | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `pair` | `string` (query param) | ✅ | Nombre del par de ejemplo. Ver `GET /api/v1/contracts` para la lista. |
+| `save_files` | `bool` (query param) | ❌ | `true` (default): guarda resultados en `output/`. `false`: solo retorna el JSON. |
 
 Primero consultá los pares disponibles:
 ```bash
 curl https://ai-engineering-m4-project.onrender.com/api/v1/contracts
 ```
 
-Luego pasá el nombre del par como query param (sin subir archivos):
+Luego enviá el nombre del par como query param:
 ```bash
 # Producción
-curl -X POST "https://ai-engineering-m4-project.onrender.com/api/v1/analyze?pair=documento_1"
+curl -X POST "https://ai-engineering-m4-project.onrender.com/api/v1/analyze/sample?pair=documento_1"
 
 # Sin guardar en disco
-curl -X POST "https://ai-engineering-m4-project.onrender.com/api/v1/analyze?pair=documento_2&save_files=false"
+curl -X POST "https://ai-engineering-m4-project.onrender.com/api/v1/analyze/sample?pair=documento_2&save_files=false"
 
 # Local
-curl -X POST "http://localhost:8000/api/v1/analyze?pair=documento_1"
+curl -X POST "http://localhost:8000/api/v1/analyze/sample?pair=documento_1"
 ```
 
-#### Respuesta exitosa `200 OK`
+#### Respuesta exitosa `200 OK` (ambos endpoints)
 
 ```json
 {
@@ -447,7 +514,7 @@ curl -X POST "http://localhost:8000/api/v1/analyze?pair=documento_1"
 
 | Código | Cuándo ocurre |
 |---|---|
-| `422` | Formato no soportado, par no encontrado, o falta input (ni archivos ni `pair`) |
+| `422` | Formato no soportado, par no encontrado, falta input, o contratos no comparables |
 | `500` | Error en algún agente (OpenAI, LangChain, Pydantic) |
 
 ```json
@@ -459,8 +526,17 @@ curl -X POST "http://localhost:8000/api/v1/analyze?pair=documento_1"
   }
 }
 ```
----
 
+```json
+{
+  "detail": {
+    "error":   "BadContractsError",
+    "message": "Los contratos no son comparables",
+    "stage":   "extraction_agent",
+    "hint":    "Los contratos no son comparables: sus objetos son totalmente distintos."
+  }
+}
+```
 ### 6. Swagger UI — Interfaz visual interactiva
 
 FastAPI genera automáticamente una interfaz para explorar y probar los endpoints sin necesidad de `curl`.

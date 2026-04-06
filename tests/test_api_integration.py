@@ -250,6 +250,7 @@ class TestAnalyzeValidation:
         assert ".txt" in detail or "extensión" in detail.lower() or "JPEG" in detail
 
     def test_missing_original_field_returns_422(self, client):
+        """Upload endpoint requires both files — FastAPI enforces this at schema level."""
         r = client.post(
             "/api/v1/analyze",
             files={"amendment": ("enmienda.jpg", b"\xff\xd8\xff" + b"fake", "image/jpeg")},
@@ -264,7 +265,13 @@ class TestAnalyzeValidation:
         assert r.status_code == 422
 
     def test_no_files_returns_422(self, client):
+        """No files at all → 422 (FastAPI enforces required fields)."""
         r = client.post("/api/v1/analyze")
+        assert r.status_code == 422
+
+    def test_sample_no_pair_param_returns_422(self, client):
+        """Sample endpoint requires the pair query param."""
+        r = client.post("/api/v1/analyze/sample")
         assert r.status_code == 422
 
 
@@ -330,16 +337,28 @@ class TestAnalyzePipelineErrors:
         assert r.status_code == 200
         assert "sections_changed" in r.json()
 
+    def test_bad_contracts_error_returns_422(self, client):
+        """Contratos no comparables → 422 con error BadContractsError."""
+        from src.exceptions import BadContractsError
+        with patch("src.api.run_pipeline", side_effect=BadContractsError("Los contratos no son comparables")):
+            r = client.post("/api/v1/analyze", files=jpeg_files())
+        assert r.status_code == 422
+        assert r.json()["detail"]["error"] == "BadContractsError"
+
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/analyze — modo sample (?pair=)
+# POST /api/v1/analyze/sample
 # ---------------------------------------------------------------------------
 
-class TestAnalyzeSampleMode:
+class TestAnalyzeSampleEndpoint:
     def test_valid_pair_returns_200(self, client, pipeline_success, save_success):
-        """?pair=documento_1 con archivos reales en test_contracts → 200."""
-        r = client.post("/api/v1/analyze?pair=documento_1&save_files=false")
+        """par=documento_1 con archivos reales en test_contracts → 200."""
+        r = client.post("/api/v1/analyze/sample?pair=documento_1&save_files=false")
         assert r.status_code == 200
+
+    def test_valid_pair_returns_sections_changed(self, client, pipeline_success, save_success):
+        r = client.post("/api/v1/analyze/sample?pair=documento_1&save_files=false")
+        assert "sections_changed" in r.json()
 
     def test_valid_pair_pipeline_called_with_test_contracts_paths(
         self, client, save_success, mock_result
@@ -347,7 +366,7 @@ class TestAnalyzeSampleMode:
         """El pipeline recibe paths dentro de data/test_contracts/."""
         with patch("src.api.run_pipeline") as mock_pipeline:
             mock_pipeline.return_value = (mock_result, "orig", "amend")
-            client.post("/api/v1/analyze?pair=documento_1&save_files=false")
+            client.post("/api/v1/analyze/sample?pair=documento_1&save_files=false")
 
         call_args = mock_pipeline.call_args
         assert call_args is not None
@@ -357,27 +376,106 @@ class TestAnalyzeSampleMode:
         assert "test_contracts" in amend_path
 
     def test_invalid_pair_returns_422(self, client):
-        """Un par que no existe devuelve 422 con lista de pares disponibles."""
-        r = client.post("/api/v1/analyze?pair=no_existe_este_par")
+        """Un par que no existe devuelve 422."""
+        r = client.post("/api/v1/analyze/sample?pair=no_existe_este_par")
         assert r.status_code == 422
 
     def test_invalid_pair_detail_has_available_pairs(self, client):
-        r = client.post("/api/v1/analyze?pair=no_existe_este_par")
+        r = client.post("/api/v1/analyze/sample?pair=no_existe_este_par")
         detail = r.json()["detail"]
         assert "available_pairs" in detail
         assert isinstance(detail["available_pairs"], list)
 
-    def test_files_and_pair_together_uses_files(self, client, pipeline_success, save_success):
-        """Cuando se envían archivos Y pair, los archivos tienen prioridad (pair ignorado)."""
-        r = client.post(
-            "/api/v1/analyze?pair=documento_1&save_files=false",
-            files=jpeg_files(),
-        )
-        assert r.status_code == 200
-        pipeline_success.assert_called_once()
-
-    def test_no_files_and_no_pair_returns_422(self, client):
-        """Sin archivos ni pair, el endpoint responde 422 con mensaje orientativo."""
-        r = client.post("/api/v1/analyze")
+    def test_missing_pair_param_returns_422(self, client):
+        """El parámetro pair es obligatorio — FastAPI lo enforza."""
+        r = client.post("/api/v1/analyze/sample")
         assert r.status_code == 422
-        assert "/api/v1/contracts" in r.json()["detail"]
+
+    def test_save_files_false_does_not_call_save(self, client, mock_result):
+        with patch("src.api.run_pipeline") as mock_pipeline:
+            mock_pipeline.return_value = (mock_result, "orig", "amend")
+            with patch("src.api.save_output_files") as mock_save:
+                client.post("/api/v1/analyze/sample?pair=documento_1&save_files=false")
+                mock_save.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/contracts/{filename}
+# ---------------------------------------------------------------------------
+
+class TestContractFileEndpoint:
+    # --- Modo raw (default) ------------------------------------------------
+
+    def test_raw_jpeg_returns_200(self, client):
+        r = client.get("/api/v1/contracts/documento_1__original.jpg")
+        assert r.status_code == 200
+
+    def test_raw_jpeg_content_type(self, client):
+        r = client.get("/api/v1/contracts/documento_1__original.jpg?mode=raw")
+        assert "image/jpeg" in r.headers["content-type"]
+
+    def test_raw_pdf_returns_200(self, client):
+        r = client.get("/api/v1/contracts/contrato_alquiler__original.pdf?mode=raw")
+        assert r.status_code == 200
+
+    def test_raw_pdf_content_type(self, client):
+        r = client.get("/api/v1/contracts/contrato_alquiler__original.pdf?mode=raw")
+        assert "pdf" in r.headers["content-type"]
+
+    def test_raw_is_default_mode(self, client):
+        """Sin ?mode, el comportamiento debe ser raw (devuelve bytes, no JSON)."""
+        r = client.get("/api/v1/contracts/documento_1__original.jpg")
+        assert r.status_code == 200
+        assert "image" in r.headers["content-type"]
+
+    def test_raw_response_is_binary(self, client):
+        r = client.get("/api/v1/contracts/documento_1__original.jpg")
+        assert len(r.content) > 0
+
+    # --- Modo text (cache) ------------------------------------------------
+
+    def test_text_cached_file_returns_200(self, client):
+        """documento_1__original.jpg tiene texto cacheado."""
+        r = client.get("/api/v1/contracts/documento_1__original.jpg?mode=text")
+        assert r.status_code == 200
+
+    def test_text_cached_source_is_cache(self, client):
+        r = client.get("/api/v1/contracts/documento_1__original.jpg?mode=text")
+        assert r.json()["source"] == "cache"
+
+    def test_text_cached_has_nonempty_text(self, client):
+        r = client.get("/api/v1/contracts/documento_1__original.jpg?mode=text")
+        body = r.json()
+        assert body["text"] is not None
+        assert len(body["text"]) > 10
+
+    def test_text_no_cache_returns_200(self, client):
+        """documento_2__enmienda.jpg no tiene texto cacheado."""
+        r = client.get("/api/v1/contracts/documento_2__enmienda.jpg?mode=text")
+        assert r.status_code == 200
+
+    def test_text_no_cache_source_is_not_available(self, client):
+        r = client.get("/api/v1/contracts/documento_2__enmienda.jpg?mode=text")
+        body = r.json()
+        assert body["source"] == "not_available"
+        assert body["text"] is None
+
+    def test_text_no_cache_has_hint(self, client):
+        r = client.get("/api/v1/contracts/documento_2__enmienda.jpg?mode=text")
+        assert "hint" in r.json()
+
+    # --- Validaciones / errores -------------------------------------------
+
+    def test_nonexistent_file_returns_404(self, client):
+        r = client.get("/api/v1/contracts/no_existe.jpg")
+        assert r.status_code == 404
+
+    def test_invalid_extension_returns_422(self, client):
+        r = client.get("/api/v1/contracts/contrato.txt")
+        assert r.status_code == 422
+
+    def test_path_traversal_encoded_returns_error(self, client):
+        """Intento de path traversal con URL encoding debe ser rechazado."""
+        r = client.get("/api/v1/contracts/..%2Fsrc%2Fapi.py")
+        # La extensión .py falla la validación → 422
+        assert r.status_code in (404, 422)
