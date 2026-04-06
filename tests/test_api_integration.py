@@ -159,16 +159,6 @@ class TestRootEndpoint:
         assert "/api/v1/analyze" in r.json()["endpoints"]["analyze"]
 
 
-class TestHealthEndpoint:
-    def test_returns_200(self, client):
-        r = client.get("/health")
-        assert r.status_code == 200
-
-    def test_status_is_ok(self, client):
-        r = client.get("/health")
-        assert r.json()["status"] == "ok"
-
-
 # ---------------------------------------------------------------------------
 # POST /api/v1/analyze — casos de éxito
 # ---------------------------------------------------------------------------

@@ -327,7 +327,6 @@ INFO:     Application startup complete.
 | Método | Endpoint | Descripción |
 |---|---|---|
 | `GET` | `/` | Información del servicio y lista de endpoints |
-| `GET` | `/health` | Health check |
 | `GET` | `/api/v1/contracts` | **Lista los contratos de ejemplo disponibles** |
 | `GET` | `/api/v1/contracts/{filename}` | **Ver un contrato individual (raw o texto)** |
 | `POST` | `/api/v1/analyze` | **Analiza archivos subidos por el usuario** |
@@ -360,22 +359,6 @@ curl http://localhost:8000/api/v1/contracts
   ],
   "individual_files": []
 }
-```
-
----
-
-### 4. `GET /health` — Health check
-
-```bash
-# Producción
-curl https://ai-engineering-m4-project.onrender.com/health
-
-# Local
-curl http://localhost:8000/health
-```
-
-```json
-{ "status": "ok", "service": "contract-analysis-api" }
 ```
 
 ---

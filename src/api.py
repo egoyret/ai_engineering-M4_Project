@@ -8,7 +8,6 @@ Ambas interfaces (CLI y API) comparten el mismo código a través de pipeline.py
 
 Endpoints:
     GET  /                              → Info del servicio
-    GET  /health                        → Health check
     GET  /api/v1/contracts              → Lista los contratos de ejemplo
     GET  /api/v1/contracts/{filename}   → Ver un contrato individual (raw o texto extraído)
     POST /api/v1/analyze                → Analiza archivos subidos por el usuario
@@ -196,16 +195,9 @@ def root():
             "contract_file":   "GET  /api/v1/contracts/{filename}",
             "analyze":         "POST /api/v1/analyze",
             "analyze_sample":  "POST /api/v1/analyze/sample",
-            "health":          "GET  /health",
             "docs":            "GET  /docs",
         },
     }
-
-
-@app.get("/health", summary="Health check")
-def health():
-    """Verifica que el servicio está activo y funcionando."""
-    return {"status": "ok", "service": "contract-analysis-api"}
 
 
 @app.get(
