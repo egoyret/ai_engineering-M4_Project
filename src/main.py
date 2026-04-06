@@ -27,6 +27,7 @@ from src.exceptions import (
     ImageParsingError,
     ContextualizationError,
     ExtractionError,
+    BadContractsError,
     OutputSaveError,
 )
 
@@ -110,6 +111,16 @@ def main():
         print("   • El modelo no pudo producir el JSON requerido con estos documentos")
         print("   • Intentá volver a ejecutar el pipeline")
         print("   • Si el problema persiste, revisá el dashboard de Langfuse")
+        sys.exit(1)
+    
+    except BadContractsError as e:
+        print(f"\n{'='*60}")
+        print("  ⚠️  ERROR EN AGENTE 2 (EXTRACCIÓN)")
+        print(f"{'='*60}")
+        print(str(e))
+        print("\n💡 Sugerencias:")
+        print("   • Los contratos ingresados no se corresponden")
+        print("   • El contrato original no parece ser comparable con su enmienda ya que los objectos de los mismos son totalmente distintos.")
         sys.exit(1)
 
     except ContractPipelineError as e:

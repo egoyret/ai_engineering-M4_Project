@@ -67,6 +67,7 @@ NO debes identificar cambios específicos todavía. Solo debes:
 2. Listar las secciones/cláusulas que existen en la ENMIENDA, con una breve descripción de su propósito.
 3. Indicar cómo se corresponden entre sí: qué secciones de la enmienda reemplazan, modifican o complementan al original.
 4. Describir el propósito general de cada bloque del documento.
+5. Si los objectos de los contratos son totalmente distintos, indica que no se puede realizar el análisis. El objeto de un contrato lo puedes obtener del titulo y/o de las primeras lineas del texto del mismo.
 
 Produce un mapa contextual claro y bien organizado que sirva como guía para el análisis posterior.
 Responde en el mismo idioma de los documentos."""

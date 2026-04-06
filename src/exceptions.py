@@ -54,6 +54,15 @@ class ExtractionError(ContractPipelineError):
     """
     pass
 
+class BadContractsError(ContractPipelineError):
+    """
+    Error durante la ejecución del Agente 2 (Extracción de cambios).
+
+    Caso de par de contratos qu eno osn comparables
+
+    """
+    pass  
+
 
 class OutputSaveError(ContractPipelineError):
     """

@@ -88,6 +88,59 @@ def pdf_files():
 
 
 # ---------------------------------------------------------------------------
+# Endpoint: GET /api/v1/contracts
+# ---------------------------------------------------------------------------
+
+class TestContractsEndpoint:
+    def test_returns_200(self, client):
+        r = client.get("/api/v1/contracts")
+        assert r.status_code == 200
+
+    def test_response_has_directory_field(self, client):
+        r = client.get("/api/v1/contracts")
+        assert "directory" in r.json()
+        assert r.json()["directory"] == "data/test_contracts"
+
+    def test_response_has_pairs_field(self, client):
+        r = client.get("/api/v1/contracts")
+        assert "pairs" in r.json()
+        assert isinstance(r.json()["pairs"], list)
+
+    def test_response_has_total_pairs_field(self, client):
+        r = client.get("/api/v1/contracts")
+        body = r.json()
+        assert "total_pairs" in body
+        assert body["total_pairs"] == len(body["pairs"])
+
+    def test_response_has_individual_files_field(self, client):
+        r = client.get("/api/v1/contracts")
+        assert "individual_files" in r.json()
+        assert isinstance(r.json()["individual_files"], list)
+
+    def test_pairs_have_correct_structure(self, client):
+        """Cada par debe tener 'pair', 'original' y 'amendment'."""
+        r = client.get("/api/v1/contracts")
+        for pair in r.json()["pairs"]:
+            assert "pair"      in pair
+            assert "original"  in pair
+            assert "amendment" in pair
+
+    def test_pairs_files_are_valid_extensions(self, client):
+        """Los archivos en cada par deben ser JPEG, PNG o PDF."""
+        valid_exts = {".jpg", ".jpeg", ".png", ".pdf"}
+        r = client.get("/api/v1/contracts")
+        for pair in r.json()["pairs"]:
+            import os
+            assert os.path.splitext(pair["original"])[1].lower()  in valid_exts
+            assert os.path.splitext(pair["amendment"])[1].lower() in valid_exts
+
+    def test_no_server_needed(self, client):
+        """El endpoint no requiere archivos subidos ni autenticación."""
+        r = client.get("/api/v1/contracts")
+        assert r.status_code == 200  # siempre responde, incluso si el dir está vacío
+
+
+# ---------------------------------------------------------------------------
 # Endpoints informativos
 # ---------------------------------------------------------------------------
 
@@ -276,3 +329,55 @@ class TestAnalyzePipelineErrors:
                 r = client.post("/api/v1/analyze", files=jpeg_files())
         assert r.status_code == 200
         assert "sections_changed" in r.json()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/analyze — modo sample (?pair=)
+# ---------------------------------------------------------------------------
+
+class TestAnalyzeSampleMode:
+    def test_valid_pair_returns_200(self, client, pipeline_success, save_success):
+        """?pair=documento_1 con archivos reales en test_contracts → 200."""
+        r = client.post("/api/v1/analyze?pair=documento_1&save_files=false")
+        assert r.status_code == 200
+
+    def test_valid_pair_pipeline_called_with_test_contracts_paths(
+        self, client, save_success, mock_result
+    ):
+        """El pipeline recibe paths dentro de data/test_contracts/."""
+        with patch("src.api.run_pipeline") as mock_pipeline:
+            mock_pipeline.return_value = (mock_result, "orig", "amend")
+            client.post("/api/v1/analyze?pair=documento_1&save_files=false")
+
+        call_args = mock_pipeline.call_args
+        assert call_args is not None
+        orig_path  = call_args.kwargs.get("original_path")  or call_args.args[0]
+        amend_path = call_args.kwargs.get("amendment_path") or call_args.args[1]
+        assert "test_contracts" in orig_path
+        assert "test_contracts" in amend_path
+
+    def test_invalid_pair_returns_422(self, client):
+        """Un par que no existe devuelve 422 con lista de pares disponibles."""
+        r = client.post("/api/v1/analyze?pair=no_existe_este_par")
+        assert r.status_code == 422
+
+    def test_invalid_pair_detail_has_available_pairs(self, client):
+        r = client.post("/api/v1/analyze?pair=no_existe_este_par")
+        detail = r.json()["detail"]
+        assert "available_pairs" in detail
+        assert isinstance(detail["available_pairs"], list)
+
+    def test_files_and_pair_together_uses_files(self, client, pipeline_success, save_success):
+        """Cuando se envían archivos Y pair, los archivos tienen prioridad (pair ignorado)."""
+        r = client.post(
+            "/api/v1/analyze?pair=documento_1&save_files=false",
+            files=jpeg_files(),
+        )
+        assert r.status_code == 200
+        pipeline_success.assert_called_once()
+
+    def test_no_files_and_no_pair_returns_422(self, client):
+        """Sin archivos ni pair, el endpoint responde 422 con mensaje orientativo."""
+        r = client.post("/api/v1/analyze")
+        assert r.status_code == 422
+        assert "/api/v1/contracts" in r.json()["detail"]

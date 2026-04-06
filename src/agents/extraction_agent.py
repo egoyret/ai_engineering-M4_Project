@@ -27,7 +27,7 @@ from langfuse import Langfuse
 from pydantic import ValidationError
 
 from src.models import ContractChangeOutput
-from src.exceptions import ExtractionError
+from src.exceptions import ExtractionError, BadContractsError
 
 # Modelo de texto para este agente
 AGENT_MODEL = "gpt-4o-mini"
@@ -72,6 +72,8 @@ Recibirás:
 1. Un mapa contextual que describe la estructura de ambos documentos (producido por un agente previo).
 2. El texto completo del contrato original.
 3. El texto completo de la enmienda.
+
+Si recibes información que indica que los objetos de los contratos son totalmente distintos, o que no se puede realizar el analisis, indica que los contratos no son comparables y no se puede realizar el análisis. Debes obligatoriamente mencionar "los contratos no son comparables" en este texto.
 
 Debes producir un análisis estructurado que incluya:
 - sections_changed: lista de las secciones/cláusulas que fueron modificadas (usa los nombres/números del documento).
@@ -188,6 +190,14 @@ Analiza los cambios y produce el output estructurado requerido."""
                 "❌ El Agente de Extracción devolvió un resultado nulo. "
                 "Intentá volver a ejecutar el pipeline."
             )
+
+        # Revisar si los contratos son comparables
+        if "Los contratos no son comparables" in result.summary_of_the_change:
+            langfuse.update_current_span(
+                level="INFO",
+                status_message="Los contratos no son comparables",
+            )
+            raise BadContractsError("Los contratos no son comparables")    
 
         latency_ms = int((time.time() - start_time) * 1000)
 
