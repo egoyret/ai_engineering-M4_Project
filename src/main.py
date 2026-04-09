@@ -74,11 +74,11 @@ def main():
     # Ejecutar el pipeline con manejo de excepciones por tipo
     # -------------------------------------------------------------------
     try:
-        print("🔍 [Etapa 1/4] Parseando contrato original con GPT-4o Vision...")
-        print("🔍 [Etapa 2/4] Parseando enmienda con GPT-4o Vision...")
-        print("🤖 [Etapa 3/4] Agente 1: construyendo mapa contextual...")
-        print("🤖 [Etapa 4/4] Agente 2: extrayendo y estructurando cambios...")
-        result, text_original, text_amendment = run_pipeline(original_path, amendment_path)
+        # print("🔍 [Etapa 1/4] Parseando contrato original con GPT-4o Vision...")
+        # print("🔍 [Etapa 2/4] Parseando enmienda con GPT-4o Vision...")
+        # print("🤖 [Etapa 3/4] Agente 1: construyendo mapa contextual...")
+        # print("🤖 [Etapa 4/4] Agente 2: extrayendo y estructurando cambios...")
+        result, text_original, text_amendment = run_pipeline(original_path, amendment_path, source="cli")
         print("   ✅ Pipeline completado.\n")
 
     except ImageParsingError as e:

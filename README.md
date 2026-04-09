@@ -300,7 +300,6 @@ El sistema también puede ser consumido como un servicio HTTP. La API está cons
 >
 > Podés usar el endpoint directamente sin levantar nada localmente:
 > - Swagger UI: [`https://ai-engineering-m4-project.onrender.com/docs`](https://ai-engineering-m4-project.onrender.com/docs)
-> - Health check: [`https://ai-engineering-m4-project.onrender.com/health`](https://ai-engineering-m4-project.onrender.com/health)
 
 ### 1. Levantar el servidor (local)
 
@@ -831,7 +830,6 @@ Usando `FastAPI TestClient` (sin servidor real), verifican el ciclo completo req
 | Clase | Qué cubre |
 |---|---|
 | `TestRootEndpoint` | `GET /` → 200, estructura de respuesta |
-| `TestHealthEndpoint` | `GET /health` → 200, `status: ok` |
 | `TestAnalyzeSuccess` | `POST /api/v1/analyze` con JPEG y PDF → 200, campos del JSON |
 | `TestAnalyzeSaveFiles` | `save_files=true` guarda archivos; `false` no los guarda; default = true |
 | `TestAnalyzeValidation` | Extensión inválida → 422; campo faltante → 422 |
@@ -869,7 +867,7 @@ No se requiere activar el entorno virtual manualmente.
 ### Resultado esperado
 
 ```
-69 passed in ~0.80s
+98 passed in ~0.80s
 ```
 
 No se realizan llamadas reales a OpenAI ni Langfuse durante los tests.

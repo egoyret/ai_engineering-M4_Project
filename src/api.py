@@ -377,6 +377,7 @@ def _execute_pipeline(
         result, text_original, text_amendment = run_pipeline(
             original_path=original_path,
             amendment_path=amendment_path,
+            source="api"
         )
         logger.info("✅ Pipeline completado. Secciones modificadas: %s", result.sections_changed)
 

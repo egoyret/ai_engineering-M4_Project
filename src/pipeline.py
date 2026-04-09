@@ -113,7 +113,7 @@ def save_output_files(
 # Pipeline principal
 # ---------------------------------------------------------------------------
 
-def run_pipeline(original_path: str, amendment_path: str) -> tuple:
+def run_pipeline(original_path: str, amendment_path: str, source: str = "cli") -> tuple:
     """
     Ejecuta el pipeline completo de análisis de contratos.
 
@@ -156,13 +156,17 @@ def run_pipeline(original_path: str, amendment_path: str) -> tuple:
         },
     ):
         # --- Etapa 1: Parsing original ---
+        if source == "cli":
+            print("🔍 [Etapa 1/4] Parseando contrato original con GPT-4o Vision...")
         text_original, tokens_parse_original = parse_contract_image(
             image_path=original_path,
             langfuse=langfuse,
             span_name="parse_original_contract",
         )
-
+ 
         # --- Etapa 2: Parsing enmienda ---
+        if source == "cli":
+            print("🔍 [Etapa 2/4] Parseando enmienda con GPT-4o Vision...")
         text_amendment, tokens_parse_amendment = parse_contract_image(
             image_path=amendment_path,
             langfuse=langfuse,
@@ -170,6 +174,8 @@ def run_pipeline(original_path: str, amendment_path: str) -> tuple:
         )
 
         # --- Etapa 3: Agente 1 — Contextualización ---
+        if source == "cli":
+            print("🤖 [Etapa 3/4] Agente 1: construyendo mapa contextual...")
         context_map, tokens_contextualization = run_contextualization_agent(
             text_original=text_original,
             text_amendment=text_amendment,
@@ -177,6 +183,8 @@ def run_pipeline(original_path: str, amendment_path: str) -> tuple:
         )
 
         # --- Etapa 4: Agente 2 — Extracción ---
+        if source == "cli":
+            print("🤖 [Etapa 4/4] Agente 2: extrayendo y estructurando cambios...")
         result, tokens_extraction = run_extraction_agent(
             context_map=context_map,
             text_original=text_original,
