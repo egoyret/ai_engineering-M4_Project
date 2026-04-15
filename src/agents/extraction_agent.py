@@ -81,7 +81,7 @@ Debes producir un análisis estructurado que incluya:
 - summary_of_the_change: descripción detallada y precisa de TODOS los cambios. Distingue claramente entre:
     * ADICIÓN: contenido nuevo que no existía en el original.
     * ELIMINACIÓN: contenido del original que fue removido.
-    * MODIFICACIÓN: contenido que fue alterado (indica el valor anterior y el nuevo).
+    * MODIFICACIÓN: contenido que fue alterado (indica el valor anterior y el nuevo).  
 
 Sé específico y exhaustivo. Responde en el mismo idioma de los documentos."""
         ),
@@ -128,7 +128,7 @@ Analiza los cambios y produce el output estructurado requerido."""
         name="extraction_agent",
         input={
             "model":                  AGENT_MODEL,
-            "context_map_preview":    context_map[:300] + "...",
+            "context_map_preview":    context_map[:1000] + "...",
             "text_original_preview":  text_original[:200] + "...",
             "text_amendment_preview": text_amendment[:200] + "...",
         },

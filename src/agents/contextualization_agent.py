@@ -154,7 +154,7 @@ Por favor, produce el mapa contextual comparado de estos dos documentos."""
 
         # Registrar output, latencia y token usage en el span activo
         langfuse.update_current_span(
-            output={"context_map_preview": context_map[:500] + "..."},
+            output={"context_map_preview": context_map[:1000] + "..."},
             metadata={
                 "model":       AGENT_MODEL,
                 "latency_ms":  latency_ms,

@@ -38,3 +38,13 @@ serve:
 # ─── CLI ──────────────────────────────────────────────────────────────────────
 run:
 	$(PYTHON) src/main.py
+
+run_sample2:
+	$(PYTHON) src/main.py data/test_contracts/documento_2__original.jpg data/test_contracts/documento_2__enmienda.jpg
+
+run_sample3:
+	$(PYTHON) src/main.py data/test_contracts/documento_3__original.jpg data/test_contracts/documento_3__enmienda.jpg
+
+run_complex:
+	$(PYTHON) src/main.py data/test_contracts/contrato_alquiler__original.pdf data/test_contracts/contrato_alquiler__modificado.pdf
+	

@@ -173,7 +173,7 @@ def parse_contract_image(
         extracted_text = response.output_text
 
         # Validar que el modelo devolvió texto (no una respuesta vacía)
-        if not extracted_text or not extracted_text.strip() or extracted_text == "Lo siento, no puedo procesar esta solicitud.":
+        if not extracted_text or not extracted_text.strip() or extracted_text == "Lo siento, no puedo procesar esta solicitud." or len(extracted_text) < 100:
             langfuse.update_current_span(
                 level="ERROR",
                 status_message=f"Respuesta vacía del modelo en '{span_name}'",
